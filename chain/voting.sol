@@ -1,4 +1,5 @@
-pragma solidity >=0.7.0 <0.9.0;
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.0 < 0.9.0;
 
 contract Voting {
 
@@ -21,14 +22,21 @@ contract Voting {
     event Voted(address voter, uint pollID, uint[] answerIDs);
 
     modifier pollActive(uint _pollID) {
+        Poll storage poll = polls[_pollID];
+        require(poll.pollID != 0, "Poll does not exist");
         require(polls[_pollID].endTime >= block.timestamp, "Poll has ended");
         require(polls[_pollID].startTime <= block.timestamp, "Poll not started");
         _;
     }
 
+    modifier onlyCreator(uint _pollID) {
+        require(msg.sender == polls[_pollID].creator, "Not creator");
+        _;
+    }
+
     function createPoll (
         string calldata _question,
-        string[] calldata _answers,
+        string[] memory _answers,
         bool _multipleChoices,
         uint _duration
     ) public {
@@ -48,5 +56,46 @@ contract Voting {
 
         nextPollID++;
         emit PollCreated(newPoll.pollID, msg.sender, _question);
+    }
+
+    function vote(uint _pollID, uint[] memory _answerIDs) public pollActive(_pollID) {
+        Poll storage poll = polls[_pollID];
+        require(poll.userVotes[msg.sender].length == 0, "Already voted");
+
+        if (!poll.multipleChoices) {
+            require(_answerIDs.length == 1, "Only one option allowed");
+        }
+        
+        for (uint i = 0; i < _answerIDs.length; i++) {
+            require(_answerIDs[i] < poll.answers.length, "Invalid answer ID");
+        }
+
+        poll.userVotes[msg.sender] = _answerIDs;
+        for (uint i = 0; i < _answerIDs.length; i++) {
+            poll.votes[_answerIDs[i]]++;
+        }
+        
+        emit Voted(msg.sender, _pollID, _answerIDs);
+    }
+
+    function getResults(uint _pollID) public view returns (uint[] memory) {
+        Poll storage poll = polls[_pollID];
+        uint[] memory results = new uint[](poll.answers.length);
+        for (uint i = 0; i < poll.answers.length; i++) {
+            results[i] = poll.votes[i];
+        }
+        return results;
+    }
+
+    function getAllPolls() public view returns (uint[] memory) {
+        uint[] memory pollIDs = new uint[](nextPollID);
+        for (uint i = 0; i < nextPollID; i++) {
+            pollIDs[i] = i;
+        }
+        return pollIDs;
+    }
+
+    function deletePoll(uint _pollID) public onlyCreator(_pollID) {
+        delete polls[_pollID];
     }
 }
