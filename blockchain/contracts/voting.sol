@@ -23,9 +23,9 @@ contract Voting {
 
     modifier pollActive(uint _pollID) {
         Poll storage poll = polls[_pollID];
-        require(poll.pollID != 0, "Poll does not exist");
-        require(polls[_pollID].endTime >= block.timestamp, "Poll has ended");
-        require(polls[_pollID].startTime <= block.timestamp, "Poll not started");
+        require(poll.startTime != 0, "Poll does not exist");
+        require(poll.endTime >= block.timestamp, "Poll has ended");
+        require(poll.startTime <= block.timestamp, "Poll not started");
         _;
     }
 
@@ -95,7 +95,9 @@ contract Voting {
         return pollIDs;
     }
 
-    function deletePoll(uint _pollID) public onlyCreator(_pollID) {
-        delete polls[_pollID];
+    function getAnswers(uint _pollID) external view returns (string[] memory) {
+        Poll storage poll = polls[_pollID];
+        require(polls[_pollID].startTime != 0, "Poll does not exist");
+        return poll.answers;
     }
 }

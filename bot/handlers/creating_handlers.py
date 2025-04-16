@@ -47,8 +47,8 @@ async def process_question(message: Message, state: FSMContext):
         await message.answer("❌ Вопрос не может быть пустым. Введите вопрос снова.")
         return
     
-    if len(message.text) > 255:
-        await message.answer("❌ Вопрос слишком длинный (максимум 255 символов).")
+    if len(message.text) > 256:
+        await message.answer("❌ Вопрос слишком длинный (максимум 256 символов).")
         return
 
     await state.update_data(question=message.text)
