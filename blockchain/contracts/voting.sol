@@ -17,6 +17,9 @@ contract Voting {
 
     mapping(uint => Poll) public polls;
     uint public nextPollID;
+    uint public constant MAX_ANSWERS = 80;
+    uint public constant MAX_QUESTION_LENGTH = 256;
+    uint public constant MAX_ANSWER_LENGTH = 100;
 
     event PollCreated(uint pollID, address creator, string question);
     event Voted(address voter, uint pollID, uint[] answerIDs);
@@ -40,12 +43,15 @@ contract Voting {
         bool _multipleChoices,
         uint _duration
     ) public {
-        require(bytes(_question).length > 0, "Question cannot be empty");
-        require(_answers.length > 1, "Need at least 2 answers");
+        require(bytes(_question).length > 0 && bytes(_question).length <= MAX_QUESTION_LENGTH, "Invalid question length");
+        require(_answers.length > 1 && _answers.length <= MAX_ANSWERS, "Invalid number of answers");
         require(_duration > 0, "Duration must be > 0");
 
-        Poll storage newPoll = polls[nextPollID];
+        for (uint i = 0; i < _answers.length; i++) {
+            require(bytes(_answers[i]).length > 0 && bytes(_answers[i]).length <= MAX_ANSWER_LENGTH, "Invalid answer length");
+        }
 
+        Poll storage newPoll = polls[nextPollID];
         newPoll.pollID = nextPollID;
         newPoll.creator = msg.sender;
         newPoll.startTime = block.timestamp;
@@ -78,6 +84,27 @@ contract Voting {
         emit Voted(msg.sender, _pollID, _answerIDs);
     }
 
+    function getPollInfo(uint _pollID) public view returns (
+        address creator,
+        uint startTime,
+        uint endTime,
+        string memory question,
+        string[] memory answers,
+        bool multipleChoices
+    ) {
+        Poll storage poll = polls[_pollID];
+        require(poll.startTime != 0, "Poll does not exist");
+        
+        return (
+            poll.creator,
+            poll.startTime,
+            poll.endTime,
+            poll.question,
+            poll.answers,
+            poll.multipleChoices
+        );
+    }
+
     function getResults(uint _pollID) public view returns (uint[] memory) {
         Poll storage poll = polls[_pollID];
         uint[] memory results = new uint[](poll.answers.length);
@@ -87,17 +114,26 @@ contract Voting {
         return results;
     }
 
-    function getAllPolls() public view returns (uint[] memory) {
-        uint[] memory pollIDs = new uint[](nextPollID);
+    function getActivePolls() public view returns (uint[] memory) {
+        uint count = 0;
         for (uint i = 0; i < nextPollID; i++) {
-            pollIDs[i] = i;
+            if (polls[i].endTime >= block.timestamp) {
+                count++;
+            }
         }
-        return pollIDs;
+        
+        uint[] memory activePolls = new uint[](count);
+        uint index = 0;
+        for (uint i = 0; i < nextPollID; i++) {
+            if (polls[i].endTime >= block.timestamp) {
+                activePolls[index] = i;
+                index++;
+            }
+        }
+        return activePolls;
     }
 
-    function getAnswers(uint _pollID) external view returns (string[] memory) {
-        Poll storage poll = polls[_pollID];
-        require(polls[_pollID].startTime != 0, "Poll does not exist");
-        return poll.answers;
+    function getUserVotes(uint _pollID, address _user) public view returns (uint[] memory) {
+        return polls[_pollID].userVotes[_user];
     }
 }
