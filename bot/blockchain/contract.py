@@ -11,7 +11,11 @@ class VotingContract:
     def __init__(self):
         self.w3 = Web3(Web3.HTTPProvider(os.getenv("RPC_URL")))
         
-        with open("blockchain/artifacts/contracts/voting.sol/Voting.json", "r") as f:
+        # Загрузка ABI контракта (путь выстраиваем относительно расположения этого файла)
+        module_dir = os.path.dirname(__file__)
+        project_root = os.path.abspath(os.path.join(module_dir, "..", ".."))
+        abi_path = os.path.join(project_root, "blockchain", "artifacts", "contracts", "voting.sol", "Voting.json")
+        with open(abi_path, "r") as f:
             contract_json = json.load(f)
             self.abi = contract_json["abi"]
         
@@ -74,3 +78,4 @@ class VotingContract:
 
     async def get_user_votes(self, poll_id: int, user_address: str):
         return self.contract.functions.getUserVotes(poll_id, user_address).call()
+    
