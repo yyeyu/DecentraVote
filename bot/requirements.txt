@@ -1,2 +1,4 @@
 aiogram==3.0.0rc2
-python-dotenv 
+python-dotenv
+web3==6.11.1
+eth-account==0.8.0 
