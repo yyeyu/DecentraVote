@@ -12,6 +12,8 @@ from aiogram.fsm.context import FSMContext
 from FSM.creating_states import VotingCreation
 import re
 from datetime import datetime
+from blockchain.voting_service import VotingService
+from aiogram.filters import StateFilter
 
 DATE_TIME_PATTERN = re.compile(r'^\d{2}:\d{2} \d{2}\.\d{2}\.\d{4}$')
 
@@ -174,11 +176,54 @@ async def process_duration(message: Message, state: FSMContext):
     )
     await state.set_state(VotingCreation.waiting_for_confirmation)
 
-@router.callback_query(F.data == "confirm_voting")
+@router.callback_query(StateFilter(VotingCreation.waiting_for_confirmation), F.data == "confirm_voting")
 async def confirm_voting(callback_query: CallbackQuery, state: FSMContext):
-    await callback_query.message.edit_text(
-        "🎉 Голосование создано!"
-    )
+    await callback_query.answer()
+    data = await state.get_data()
+    question = data.get("question")
+    options = data.get("options")
+    multiple_choice = data.get("multiple_choice")
+    start_time = data.get("start_time")
+    duration_hours = data.get("duration")
+    try:
+        voting_service = VotingService()
+        poll_id = await voting_service.create_poll(
+            question=question,
+            options=options,
+            multiple_choices=multiple_choice,
+            start_time=start_time,
+            duration_hours=duration_hours
+        )
+        options_text = "\n".join([f"{i+1}. {opt}" for i, opt in enumerate(options)])
+        multiple_choice_text = "Да" if multiple_choice else "Нет"
+        await callback_query.message.answer(
+            f"✅ Голосование успешно создано!\n\n"
+            f"ID голосования: {poll_id}\n"
+            f"Вопрос: {question}\n"
+            f"Варианты ответа:\n{options_text}\n"
+            f"Множественный выбор: {multiple_choice_text}\n"
+            f"Начало: {start_time}\n"
+            f"Длительность: {duration_hours} часов"
+        )
+    except Exception as e:
+        err_msg = str(e)
+        if "ConnectionRefused" in err_msg or "Failed to establish a new connection" in err_msg:
+            await callback_query.message.answer(
+                "❌ Не удалось подключиться к RPC-нoде.\n"
+                "Убедитесь, что вы запустили локальный блокчейн и правильно указали `RPC_URL` в .env."
+            )
+        elif "insufficient funds" in err_msg:
+            await callback_query.message.answer(
+                "❌ Недостаточно средств на счёте администратора для оплаты газа.\n"
+                "Пожалуйста, пополните баланс или уменьшите `gas`/`gasPrice` в настройках."
+            )
+        else:
+            from html import escape
+            safe = escape(err_msg)
+            await callback_query.message.answer(
+                f"❌ Произошла ошибка при создании голосования:\n<pre>{safe}</pre>\n"
+                "Пожалуйста, попробуйте создать голосование заново."
+            )
     await state.clear()
 
 @router.callback_query(F.data == "cancel_voting")
