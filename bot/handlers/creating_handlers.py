@@ -9,12 +9,23 @@ from keyboards.creating_keyboards import (
     get_finish_keyboard
 )
 from aiogram.fsm.context import FSMContext
-from FSM.creating_states import VotingCreation
+from FSM.states import VotingCreation
 import re
 from datetime import datetime
-from blockchain.voting_service import VotingService
 from aiogram.filters import StateFilter
+from dotenv import load_dotenv
+from blockchain.voting_service import *
+import html
 
+load_dotenv()
+
+RPC_URL = os.getenv("RPC_URL")
+CONTRACT_ADDRESS = os.getenv("CONTRACT_ADDRESS")
+SECRET_KEY = os.getenv("SECRET_KEY")
+ADMIN_KEY = os.getenv("ADMIN_KEY")
+module_dir = os.path.dirname(__file__)
+project_root = os.path.abspath(os.path.join(module_dir, "..", ".."))
+ABI_PATH = os.path.join(project_root, "blockchain", "contracts", "ContractABI.json")
 DATE_TIME_PATTERN = re.compile(r'^\d{2}:\d{2} \d{2}\.\d{2}\.\d{4}$')
 
 router = Router()
@@ -109,7 +120,7 @@ async def process_multiple_choice(callback_query: CallbackQuery, state: FSMConte
     await state.update_data(multiple_choice=multiple_choice)
     await callback_query.message.edit_text(
         f"✅ Множественный выбор: {'Да' if multiple_choice else 'Нет'}\n\n"
-        "Введите время начала голосования (например, 12:00):",
+        "Введите время начала голосования (формат: ЧЧ:ММ ДД.ММ.ГГГГ):",
         reply_markup=None
     )
     await state.set_state(VotingCreation.waiting_for_start_time)
@@ -148,7 +159,7 @@ async def process_start_time(message: Message, state: FSMContext):
     await state.update_data(start_time=user_input)
     await message.answer(
         f"✅ Время начала: {user_input}\n\n"
-        "Введите длительность голосования (в часах):",
+        "Введите длительность голосования (в минутах):",
         reply_markup=get_cancel_keyboard()
     )
     await state.set_state(VotingCreation.waiting_for_duration)
@@ -156,75 +167,154 @@ async def process_start_time(message: Message, state: FSMContext):
 @router.message(VotingCreation.waiting_for_duration)
 async def process_duration(message: Message, state: FSMContext):
     try:
-        duration = int(message.text)
-        if duration <= 0:
-            raise ValueError("Длительность должна быть положительным числом.")
-    except ValueError as e:
-        await message.answer(f"❌ {e}. Попробуйте снова.")
-        return
-    
-    await state.update_data(duration=int(message.text))
-    data = await state.get_data()
-    await message.answer(
-        f"🗳️ <b>Готово!</b>\n\n"
-        f"Вопрос: {data['question']}\n"
-        f"Варианты: {', '.join(data['options'])}\n"
-        f"Множественный выбор: {'Да' if data['multiple_choice'] else 'Нет'}\n"
-        f"Время начала: {data['start_time']}\n"
-        f"Длительность: {data['duration']} часа(ов)",
-        reply_markup=get_finish_keyboard()
-    )
-    await state.set_state(VotingCreation.waiting_for_confirmation)
+        duration_minutes = int(message.text.strip())
+        
+        if duration_minutes < 1:
+            await message.answer(
+                "❌ Минимальная длительность - 1 минута\n"
+                "Попробуйте снова:",
+                reply_markup=None
+            )
+            return
+            
+        if duration_minutes > 525600:
+            await message.answer(
+                "❌ Максимальная длительность - 525600 минут (365 дней)\n"
+                "Попробуйте снова:",
+                reply_markup=None
+            )
+            return
+
+        duration_seconds = duration_minutes * 60
+        await state.update_data({
+            'duration': duration_minutes,  
+            'duration_seconds': duration_seconds  
+        })
+
+        data = await state.get_data()
+        
+        days = duration_minutes // 1440
+        hours = (duration_minutes % 1440) // 60
+        minutes = duration_minutes % 60
+        
+        duration_display = []
+        if days > 0:
+            duration_display.append(f"{days} дн.")
+        if hours > 0:
+            duration_display.append(f"{hours} ч.")
+        if minutes > 0 or not duration_display:
+            duration_display.append(f"{minutes} мин.")
+        
+        await message.answer(
+            f"🗳️ <b>Параметры голосования</b>\n\n"
+            f"• Вопрос: {data['question']}\n"
+            f"• Варианты: {', '.join(data['options'])}\n"
+            f"• Множественный выбор: {'Да' if data['multiple_choice'] else 'Нет'}\n"
+            f"• Начало: {data['start_time']}\n"
+            f"• Длительность: {' '.join(duration_display)} ({duration_minutes} минут)",
+            reply_markup=get_finish_keyboard(),
+            parse_mode="HTML"
+        )
+        
+        await state.set_state(VotingCreation.waiting_for_confirmation)
+
+    except ValueError:
+        await message.answer(
+            "❌ Нужно ввести целое число минут (от 1 до 525600)\n"
+            "Примеры:\n"
+            "• 60 (1 час)\n"
+            "• 1440 (1 день)\n"
+            "• 10080 (1 неделя)",
+            reply_markup=None
+        )
 
 @router.callback_query(StateFilter(VotingCreation.waiting_for_confirmation), F.data == "confirm_voting")
 async def confirm_voting(callback_query: CallbackQuery, state: FSMContext):
-    await callback_query.answer()
+    await callback_query.message.edit_text("⏳ Подождите, идет загрузка голосования в блокчейн…\nОбычно это занимает 10-30 секунд.")
+
     data = await state.get_data()
-    question = data.get("question")
-    options = data.get("options")
-    multiple_choice = data.get("multiple_choice")
-    start_time = data.get("start_time")
-    duration_hours = data.get("duration")
+    
     try:
-        voting_service = VotingService()
-        poll_id = await voting_service.create_poll(
+        voting_service = VotingService(RPC_URL, CONTRACT_ADDRESS, ABI_PATH, SECRET_KEY, ADMIN_KEY)
+        w3 = voting_service.w3
+
+        required_fields = ['question', 'options', 'multiple_choice', 'start_time', 'duration_seconds']
+        for field in required_fields:
+            if field not in data:
+                raise ValueError(f"Отсутствует обязательное поле: {field}")
+
+        question = data["question"]
+        answers = data["options"]
+        multiple_choices = bool(data["multiple_choice"])
+        duration_seconds = int(data["duration_seconds"])
+        raw_start_time = data["start_time"]
+        
+        parsed_time = datetime.strptime(raw_start_time, "%H:%M %d.%m.%Y")
+        start_time = int(parsed_time.timestamp())
+
+        current_block = w3.eth.get_block('latest')
+        current_time = current_block.timestamp
+        time_diff = start_time - current_time
+
+        if time_diff <= 0:
+            raise ValueError(
+                f"Время начала должно быть в будущем\n"
+                f"• Текущее время блока: {current_time} ({datetime.fromtimestamp(current_time)})\n"
+                f"• Указанное время: {start_time} ({datetime.fromtimestamp(start_time)})\n"
+                f"• Разница: {time_diff} секунд"
+            )
+
+        receipt = voting_service.create_poll(
             question=question,
-            options=options,
-            multiple_choices=multiple_choice,
-            start_time=start_time,
-            duration_hours=duration_hours
+            answers=answers,
+            multiple=multiple_choices,
+            start=start_time,
+            duration=duration_seconds
         )
-        options_text = "\n".join([f"{i+1}. {opt}" for i, opt in enumerate(options)])
-        multiple_choice_text = "Да" if multiple_choice else "Нет"
-        await callback_query.message.answer(
-            f"✅ Голосование успешно создано!\n\n"
-            f"ID голосования: {poll_id}\n"
-            f"Вопрос: {question}\n"
-            f"Варианты ответа:\n{options_text}\n"
-            f"Множественный выбор: {multiple_choice_text}\n"
-            f"Начало: {start_time}\n"
-            f"Длительность: {duration_hours} часов"
+
+        duration_minutes = duration_seconds // 60
+        duration_hours = duration_minutes // 60
+        duration_days = duration_hours // 24
+
+        duration_str = []
+        if duration_days > 0:
+            duration_str.append(f"{duration_days} д.")
+        if duration_hours % 24 > 0:
+            duration_str.append(f"{duration_hours % 24} ч.")
+        if duration_minutes % 60 > 0:
+            duration_str.append(f"{duration_minutes % 60} мин.")
+
+        await callback_query.message.edit_text(
+            f"✅ <b>Голосование создано успешно!</b>\n\n"
+            f"▸ Вопрос: {html.escape(question)}\n"
+            f"▸ Варианты: {', '.join(html.escape(a) for a in answers)}\n"
+            f"▸ Длительность: {' '.join(duration_str)}\n"
+            f"▸ Начало: {parsed_time.strftime('%H:%M %d.%m.%Y')}\n\n"
+            f"TX Hash: <code>0x{receipt}</code>",
+            parse_mode="HTML",
+            reply_markup=None
+        )
+
+    except ValueError as ve:
+        await callback_query.message.edit_text(
+            f"❌ <b>Ошибка валидации:</b>\n{html.escape(str(ve))}",
+            parse_mode="HTML"
         )
     except Exception as e:
-        err_msg = str(e)
-        if "ConnectionRefused" in err_msg or "Failed to establish a new connection" in err_msg:
-            await callback_query.message.answer(
-                "❌ Не удалось подключиться к RPC-нoде.\n"
-                "Убедитесь, что вы запустили локальный блокчейн и правильно указали `RPC_URL` в .env."
-            )
-        elif "insufficient funds" in err_msg:
-            await callback_query.message.answer(
-                "❌ Недостаточно средств на счёте администратора для оплаты газа.\n"
-                "Пожалуйста, пополните баланс или уменьшите `gas`/`gasPrice` в настройках."
-            )
-        else:
-            from html import escape
-            safe = escape(err_msg)
-            await callback_query.message.answer(
-                f"❌ Произошла ошибка при создании голосования:\n<pre>{safe}</pre>\n"
-                "Пожалуйста, попробуйте создать голосование заново."
-            )
-    await state.clear()
+        error_msg = f"❌ <b>Критическая ошибка:</b>\n{html.escape(str(e))}"
+        
+        if hasattr(e, 'args') and e.args:
+            error_details = "\n".join([html.escape(str(arg)) for arg in e.args if arg])
+            if error_details:
+                error_msg += f"\n\n<code>{error_details}</code>"
+        
+        await callback_query.message.edit_text(
+            error_msg,
+            parse_mode="HTML"
+        )
+
+    finally:
+        await state.clear()
 
 @router.callback_query(F.data == "cancel_voting")
 async def cancel_voting(callback_query: CallbackQuery, state: FSMContext):

@@ -1,4 +1,4 @@
 aiogram==3.0.0rc2
 python-dotenv
-web3==6.11.1
+web3==7.10.0
 eth-account==0.8.0 

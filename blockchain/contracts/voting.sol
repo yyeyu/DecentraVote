@@ -19,16 +19,14 @@ contract Voting {
     mapping(uint => Poll) private _polls;
     uint public nextPollID;
     
-    
     uint public maxAnswers = 16;
     uint public maxQuestionLength = 256;
     uint public maxAnswerLength = 128;
     uint public minDuration = 1 minutes;
     uint public maxDuration = 365 days;
 
-    event PollCreated(uint indexed id, address creator, bytes question);
+    event PollCreated(uint indexed id, address creator, bytes question, uint startTime, uint endTime);
     event PollCanceled(uint indexed id);
-    event PollEdited(uint indexed id);
     event Voted(address indexed voter, uint indexed pollID, uint[] answerIDs, uint timestamp);
     event ScheduleUpdated(uint indexed pollID, uint newStartTime);
 
@@ -86,10 +84,12 @@ contract Voting {
         newPoll.startTime = _startTime;
         newPoll.endTime = _startTime + _duration;
         newPoll.question = _question;
-        newPoll.answers = _answers;
+        for (uint i = 0; i < _answers.length; i++) {
+            newPoll.answers.push(_answers[i]);
+        }
         newPoll.multipleChoices = _multipleChoices;
 
-        emit PollCreated(pollID, msg.sender, _question);
+        emit PollCreated(pollID, msg.sender, _question, _startTime, _duration);
     }
 
     function vote(uint _pollID, uint[] calldata _answerIDs) 
