@@ -5,6 +5,12 @@ def get_menu_keyboard():
         keyboard=[
             [
                 KeyboardButton(text="Создать голосование")
+            ],
+            [
+                KeyboardButton(text="Проголосовать")
+            ],
+            [
+                KeyboardButton(text="Открыть голосование"),
             ]
         ],
         resize_keyboard=True
